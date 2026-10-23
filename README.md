@@ -1,59 +1,37 @@
-# refactoring-renewal-example
+# Legacy Code Refactoring (SOLID)
 
-W tym zadaniu Waszym celem jest refaktoryzacja kodu aplikacji nazwanej `LegacyRenewalApp`.
+Refactoring of a legacy subscription-renewal service in C# (.NET 8), done for the APBD course at PJAIT. The original task is in [docs/TASK.en.md](docs/TASK.en.md) ([Polish version](docs/TASK.pl.md)).
 
-Zakładamy, że aplikacja działa poprawnie biznesowo i nie poprawiacie jej funkcjonalności. Waszym zadaniem jest wyłącznie poprawa jakości kodu.
+## The problem
 
-Projekt `LegacyRenewalAppConsumer` pełni rolę kodu klienckiego. Tego projektu nie wolno modyfikować. Kod w projekcie `LegacyRenewalApp` może być modyfikowany tak długo, jak długo nie psujecie publicznego kontraktu wykorzystywanego przez `LegacyRenewalAppConsumer`.
+`SubscriptionRenewalService.CreateRenewalInvoice` was one long method that validated input, loaded data, calculated discounts, fees and tax, built the invoice, saved it and sent an email. It created its own dependencies with `new` and called a static third-party class, `LegacyBillingGateway`, directly.
 
-Dodatkowo nie wolno modyfikować klasy `LegacyBillingGateway`. Zakładamy, że jest to zewnętrzna, statyczna klasa pochodząca ze starej biblioteki. Jeśli chcecie ograniczyć sprzężenie z nią, musicie ją opakować we własną abstrakcję.
+The constraints made it a real refactoring exercise rather than a rewrite:
 
-## Cel zadania
+- the client project, `LegacyRenewalAppConsumer`, must not change, so the public contract must stay exactly the same;
+- `LegacyBillingGateway` must not change either;
+- the calculated invoice must stay the same.
 
-To zadanie ma sprawdzić zrozumienie:
+## What changed
 
-- DRY,
-- zasad SOLID,
-- kohezji,
-- coupling,
-- bezpiecznego refaktoryzowania działającego kodu.
+| Before | After |
+|---|---|
+| One method doing everything | `SubscriptionRenewalService` orchestrates; calculation, data access and billing live in their own classes |
+| Dependencies created with `new` inside the service | Injected through the constructor as interfaces (`ICustomerRepository`, `ISubscriptionPlanRepository`, `IPricingCalculator`, `IBillingGateway`) |
+| Direct calls to the static `LegacyBillingGateway` | Wrapped by `BillingGatewayAdapter` behind `IBillingGateway` (Adapter pattern) |
+| Pricing logic mixed with invoice building | Moved to `PricingCalculator`, returning a `PricingResult` |
+| Input checks interleaved with logic | Collected in `ValidateInputs` |
 
-## Co jest problemem w obecnym kodzie
+**Keeping the contract.** The parameterless constructor the client relies on still exists and chains to the new injecting constructor with the default implementations, so the client compiles and behaves as before while the service itself can now be tested with fakes.
 
-Klasa `SubscriptionRenewalService` zawiera jedną długą metodę, która miesza wiele odpowiedzialności:
+## Running it
 
-- walidację danych wejściowych,
-- pobieranie danych z repozytoriów,
-- logikę biznesową związaną z rabatami,
-- logikę opłat dodatkowych,
-- logikę podatkową,
-- budowanie obiektu faktury,
-- zapis faktury,
-- wysyłkę wiadomości e-mail.
+Requires the .NET 8 SDK.
 
-Dodatkowo w kodzie występują:
+```bash
+dotnet run --project LegacyRenewalAppConsumer
+```
 
-- rozbudowane bloki `if-else`,
-- bezpośrednie tworzenie zależności wewnątrz serwisu,
-- bezpośrednie użycie statycznej klasy zewnętrznej,
-- logika, którą można później przenieść do osobnych klas lub serwisów domenowych.
+## What I would do next
 
-## Oczekiwania wobec refaktoryzacji
-
-Student powinien:
-
-- ładnie podzielić kod na odpowiedzialności,
-- poprawić kohezję klas,
-- zmniejszyć coupling,
-- usunąć powtórzenia,
-- wydzielić fragmenty logiki do osobnych klas,
-- rozważyć rozbicie części `if-else` na interfejsy i implementacje zgodnie z Open/Closed Principle,
-- ograniczyć bezpośrednie zależności przez wprowadzenie abstrakcji i prostego IoC przez wstrzykiwanie zależności,
-- opakować `LegacyBillingGateway` we własną klasę lub interfejs bez modyfikowania samej klasy statycznej.
-
-## Ważne ograniczenia
-
-- Nie zmieniaj kodu w `LegacyRenewalAppConsumer`.
-- Nie zmieniaj klasy `LegacyBillingGateway`.
-- Zachowaj publiczny kontrakt wykorzystywany przez kod kliencki.
-- Zakładamy, że obecna logika działa poprawnie. Refaktoryzacja ma poprawić jakość kodu, a nie zmienić wynik działania z perspektywy klienta.
+The refactoring removes coupling, but `PricingCalculator` still holds the discount, support-fee, payment-fee and tax rules as `if`/`else` chains. The next step, which the task suggests, is the Open/Closed Principle: one small class per rule behind a common interface (`IDiscountRule`, `IPaymentFeePolicy`, `ITaxPolicy`), so a new customer segment or payment method is added as a new class rather than by editing the calculator. Unit tests for the calculator, using the injecting constructor, would lock the current results in before that change.
